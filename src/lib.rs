@@ -1,8 +1,10 @@
 #![feature(allocator_api)]
+#![feature(core_intrinsics)]
 #![feature(alloc_layout_extra)]
 #![feature(slice_ptr_get)]
 
 mod raw;
+pub mod sorted;
 pub mod vanilla;
 
 // TODO

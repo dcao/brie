@@ -6,6 +6,9 @@
 //! parameter, saving a pointer's worth of memory on every allocation.
 //! Callers must manually pass in the Bump allocator on every allocating
 //! call.
+//! 
+//! FIXME: the unsafe documentation hasn't been updated yet so it's prolly
+//!        wrong lmao
 
 #![allow(unstable_name_collisions)]
 #![allow(dead_code)]
@@ -94,36 +97,34 @@ impl<'a, T> RawVec<'a, T> {
     }
 
     fn allocate_in(cap: usize, zeroed: bool, a: &'a Bump) -> Self {
-        unsafe {
-            let elem_size = mem::size_of::<T>();
+        let elem_size = mem::size_of::<T>();
 
-            let alloc_size = cap
-                .checked_mul(elem_size)
-                .unwrap_or_else(|| capacity_overflow());
-            alloc_guard(alloc_size).unwrap_or_else(|_| capacity_overflow());
+        let alloc_size = cap
+            .checked_mul(elem_size)
+            .unwrap_or_else(|| capacity_overflow());
+        alloc_guard(alloc_size).unwrap_or_else(|_| capacity_overflow());
 
-            // handles ZSTs and `cap = 0` alike
-            let ptr = if alloc_size == 0 {
-                NonNull::<T>::dangling()
+        // handles ZSTs and `cap = 0` alike
+        let ptr = if alloc_size == 0 {
+            NonNull::<T>::dangling()
+        } else {
+            let align = mem::align_of::<T>();
+            let layout = Layout::from_size_align(alloc_size, align).unwrap();
+            let result = if zeroed {
+                a.allocate_zeroed(layout)
             } else {
-                let align = mem::align_of::<T>();
-                let layout = Layout::from_size_align(alloc_size, align).unwrap();
-                let result = if zeroed {
-                    a.allocate_zeroed(layout)
-                } else {
-                    a.allocate(layout)
-                };
-                match result {
-                    Ok(ptr) => ptr.cast(),
-                    Err(_) => handle_alloc_error(layout),
-                }
+                a.allocate(layout)
             };
-
-            RawVec {
-                ptr,
-                cap,
-                _marker: PhantomData,
+            match result {
+                Ok(ptr) => ptr.cast(),
+                Err(_) => handle_alloc_error(layout),
             }
+        };
+
+        RawVec {
+            ptr,
+            cap,
+            _marker: PhantomData,
         }
     }
 }

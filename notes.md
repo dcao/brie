@@ -2,8 +2,10 @@
 - https://github.com/fitzgen/bumpalo/blob/main/src/collections/raw_vec.rs
 
 todos:
-- [ ] implement a simple hash trie (`HashMap<T, Self>`)
-- [ ] benchmark harness (criterion, iai, etc.)
+- [x] implement a simple hash trie (`HashMap<T, Self>`)
+- [x] benchmark harness (criterion, iai, etc.)
+- [ ] add a vanilla::SortedTrie?
+- [ ] api for sorted: arena as first param instead of last?
 
 https://bheisler.github.io/criterion.rs/book/user_guide/comparing_functions.html
 

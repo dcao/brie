@@ -9,7 +9,7 @@ hashbrown = { version = "0.12", features = ["bumpalo"] }
 
 [dev-dependencies]
 criterion = "0.3"
-itertools = "0.10"
+rand = "0.8"
 
 [[bench]]
 name = "bench_all"
