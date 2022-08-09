@@ -10,6 +10,8 @@ use std::hash::Hash;
 use bumpalo::Bump;
 use hashbrown::{hash_map::DefaultHashBuilder, BumpWrapper, HashMap};
 
+use crate::Trieish;
+
 /// A vanilla hash trie!
 /// Nothing special, just a bunch of nested HashMaps.
 #[derive(Debug, Clone)]
@@ -21,28 +23,26 @@ impl<T> Default for Trie<T> {
     }
 }
 
-impl<T> Trie<T>
+impl<'bump, T> Trieish<'bump> for Trie<T>
 where
     T: Eq + Hash + Clone,
 {
-    pub fn new() -> Self {
+    type Value = T;
+    type Tuple<'a> = &'a [T] where T: 'a;
+
+    fn empty(_bump: &'bump Bump) -> Self {
         Self::default()
     }
 
-    pub fn insert(&mut self, shuffle: &[usize], tuple: &[T]) {
-        // debug_assert_eq!(shuffle.len(), tuple.len());
-        debug_assert!(shuffle.len() <= tuple.len());
-        let mut trie = self;
-        for i in shuffle {
-            trie = trie.0.entry(tuple[*i].clone()).or_default()
-        }
-    }
-
-    pub fn insert_tuple(&mut self, tuple: &[T]) {
+    fn insert<'a>(&mut self, tuple: &'a [T], _arena: &'bump Bump) where T: 'a {
         let mut trie = self;
         for v in tuple {
             trie = trie.0.entry(v.clone()).or_default()
         }
+    }
+
+    fn query(&self, v: &Self::Value) -> bool {
+        self.0.contains_key(v)
     }
 }
 
@@ -50,33 +50,25 @@ where
 #[derive(Debug, Clone)]
 pub struct BumpTrie<'a, T>(HashMap<T, Self, DefaultHashBuilder, BumpWrapper<'a>>);
 
-impl<'a, T> BumpTrie<'a, T>
+impl<'b, T> Trieish<'b> for BumpTrie<'b, T>
 where
     T: Eq + Hash + Clone,
 {
-    pub fn new_in(arena: &'a Bump) -> Self {
-        Self(HashMap::new_in(BumpWrapper(arena)))
+    type Value = T;
+    type Tuple<'a> = &'a [T] where T: 'a;
+
+    fn empty(bump: &'b Bump) -> Self {
+        Self(HashMap::new_in(BumpWrapper(bump)))
     }
 
-    pub fn insert(&mut self, arena: &'a Bump, shuffle: &[usize], tuple: &[T]) {
-        // debug_assert_eq!(shuffle.len(), tuple.len());
-        debug_assert!(shuffle.len() <= tuple.len());
-        let mut trie = self;
-        for i in shuffle {
-            trie = trie
-                .0
-                .entry(tuple[*i].clone())
-                .or_insert_with(|| Self::new_in(arena));
-        }
-    }
-
-    pub fn insert_tuple(&mut self, arena: &'a Bump, tuple: &[T]) {
+    fn insert<'a>(&mut self, tuple: &'a [T], arena: &'b Bump) where T: 'a {
         let mut trie = self;
         for v in tuple {
-            trie = trie
-                .0
-                .entry(v.clone())
-                .or_insert_with(|| Self::new_in(arena))
+            trie = trie.0.entry(v.clone()).or_insert_with(|| Self::empty(arena))
         }
+    }
+
+    fn query(&self, v: &Self::Value) -> bool {
+        self.0.contains_key(v)
     }
 }

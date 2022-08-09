@@ -5,7 +5,9 @@ use bumpalo::Bump;
 use core::{ptr, slice, fmt};
 use std::{cmp::Ordering, ops};
 
-use crate::raw::RawVec;
+use crate::Trieish;
+
+use super::vec::RawVec;
 
 // TODO: bench SoA approach:
 //       two bufs, one for key, one for val
@@ -188,31 +190,27 @@ impl<'bump, K: 'bump + fmt::Debug, V: 'bump + fmt::Debug> fmt::Debug for Map<'bu
 
 pub struct Trie<'a, T>(Map<'a, T, Self>);
 
-impl<'a, T> Trie<'a, T>
+impl<'b, T> Trieish<'b> for Trie<'b, T>
 where
     T: Ord + Eq + Clone
 {
-    pub fn new() -> Self {
+    type Value = T;
+    type Tuple<'a> = &'a [T] where T: 'a;
+
+    fn empty(_bump: &'b Bump) -> Self {
         Self(Map::new())
     }
 
-    pub fn insert(&mut self, arena: &'a Bump, shuffle: &[usize], tuple: &[T]) {
-        // debug_assert_eq!(shuffle.len(), tuple.len());
-        debug_assert!(shuffle.len() <= tuple.len());
-        let mut trie = self;
-        for i in shuffle {
-            trie = trie
-                .0
-                .get_or_insert(tuple[*i].clone(), Self::new, arena);
-        }
-    }
-
-    pub fn insert_tuple(&mut self, arena: &'a Bump, tuple: &[T]) {
+    fn insert<'a>(&mut self, tuple: &'a [T], arena: &'b Bump) where T: 'a {
         let mut trie = self;
         for v in tuple {
             trie = trie
                 .0
-                .get_or_insert(v.clone(), Self::new, arena);
+                .get_or_insert(v.clone(), || Self(Map::new()), arena);
         }
+    }
+
+    fn query(&self, v: &Self::Value) -> bool {
+        todo!()
     }
 }

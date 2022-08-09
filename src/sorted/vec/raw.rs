@@ -6,22 +6,21 @@
 //! parameter, saving a pointer's worth of memory on every allocation.
 //! Callers must manually pass in the Bump allocator on every allocating
 //! call.
-//! 
+//!
 //! FIXME: the unsafe documentation hasn't been updated yet so it's prolly
 //!        wrong lmao
 
 #![allow(unstable_name_collisions)]
 #![allow(dead_code)]
 
-mod alloc;
-mod err;
-
-use alloc::{handle_alloc_error, Alloc};
+use super::{
+    alloc::{handle_alloc_error, Alloc},
+    err::{CollectionAllocError, CollectionAllocError::*},
+};
 use core::{
     cmp, mem,
     ptr::{self, NonNull},
 };
-use err::{CollectionAllocError, CollectionAllocError::*};
 use std::marker::PhantomData;
 
 use core::alloc::{Allocator, Layout};
