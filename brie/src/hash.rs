@@ -27,6 +27,9 @@ fn get_bit_sizes<const N: usize>(iter_len: usize) -> (usize, u32, u32) {
     (capacity, total_bits, hash_bits)
 }
 
+// TODO: a StatefulTrie which contains query/hash_key state
+//       so that it'll work with the Trieish trait
+
 pub struct Trie<'bump, T, const N: usize> {
     hash_keys: BumpVec<'bump, Key>,
     extra_sibs: BumpVec<'bump, Key>,
@@ -37,13 +40,13 @@ impl<'bump, T, const N: usize> Trie<'bump, T, N>
 where
     T: Clone + Hash + Default + PartialEq + Eq,
 {
-    pub fn from_sorted<I, H>(iter: I, bump: &'bump Bump) -> Self
+    pub fn from_sorted<H, I>(iter: I, bump: &'bump Bump) -> Self
     where
         I: ExactSizeIterator<Item = [T; N]>,
         H: Hasher + Default,
     {
         let iter = iter.into_iter();
-        let (capacity, total_bits, hash_bits) = get_bit_sizes::<N>(iter.len());
+        let (capacity, _total_bits, hash_bits) = get_bit_sizes::<N>(iter.len());
         let mut hash_keys = BumpVec::with_capacity_in(capacity, bump);
         let mut extra_sibs: BumpVec<'bump, Key> = BumpVec::with_capacity_in(capacity, bump);
         let mut data = BumpVec::with_capacity_in(capacity, bump);
@@ -98,10 +101,9 @@ where
                             }
                         }
                     }
-
-                    cur_key = Some(new_key);
                 }
 
+                cur_key = Some(new_key);
                 prev_hash = Some(ix);
             }
 
@@ -150,7 +152,6 @@ where
         // If none of the sibs check out, we can't materialize (the query doesn't exist
         // and there's some sort of mismatch between hash_ix and query)
         let mut cur: Result<usize, usize> = Ok(hash_ix);
-        let mut block: &'bump Key;
 
         // Outer loop: check cur block if it works
         loop {

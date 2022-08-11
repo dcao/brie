@@ -1,6 +1,6 @@
 use brie::{
     sorted::{self, Trie},
-    vanilla, Trieish,
+    vanilla, Trieish, hash,
 };
 use bumpalo::Bump;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -57,6 +57,18 @@ fn build_flat(c: &mut Criterion) {
                     let a = Bump::new();
                     let _t: sorted::flat::Trie<'_, usize, 1, sorted::flat::Write> =
                         sorted::flat::Trie::from_iter((0..*sz).map(|x| [x]), &a);
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("hash::Trie from_iter", upper),
+            &upper,
+            |b, sz| {
+                b.iter(|| {
+                    let a = Bump::new();
+                    let _t: hash::Trie<'_, usize, 1> =
+                        hash::Trie::from_sorted::<ahash::AHasher, _>((0..*sz).map(|x| [x]), &a);
                 })
             },
         );
@@ -281,6 +293,6 @@ fn query_mid(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default();
-    targets = query_mid
+    targets = build_flat, query_mid
 }
 criterion_main!(benches);
