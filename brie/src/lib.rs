@@ -19,6 +19,10 @@ pub mod skip_list;
 // sorted trie
 // custom hash trie (optimized for size and no delete!)
 
+// TODO: a Oneshot trait which doesn't have insert or empty.
+//       This is for tries that 
+//       Trieish tries are a subset of Oneshot tries which can
+//       also do insertion and such
 pub trait Trieish<'bump> {
     type Value;
     type Tuple<'a>: AsRef<[Self::Value]> where Self::Value: 'a; // should be [V; N] or &[V]
