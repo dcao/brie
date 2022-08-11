@@ -3,11 +3,15 @@
 #![feature(alloc_layout_extra)]
 #![feature(slice_ptr_get)]
 #![feature(generic_associated_types)]
+#![feature(generic_const_exprs)]
+#![feature(int_log)]
 
 use bumpalo::Bump;
 
 pub mod sorted;
 pub mod vanilla;
+pub mod hash;
+pub mod skip_list;
 
 // TODO
 // binary heap trie?
@@ -24,6 +28,10 @@ pub trait Trieish<'bump> {
     // TODO: what if this changes the type of self?
     // fn advance(&mut self, v: &Self::Value) -> bool;
     fn query(&self, v: &Self::Value) -> bool;
+
+    fn advance(&self, _v: &Self::Value) -> Option<&Self> {
+        todo!()
+    }
 
     fn from_iter<'a, I: IntoIterator<Item = Self::Tuple<'a>>>(iter: I, bump: &'bump Bump) -> Self
     where

@@ -5,6 +5,8 @@ use brie::{
 use bumpalo::Bump;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
+use rand::prelude::SliceRandom;
+
 fn build_flat(c: &mut Criterion) {
     let mut group = c.benchmark_group("trie, build flat (1 layer)");
 
@@ -223,9 +225,62 @@ fn build_flat(c: &mut Criterion) {
 //     }
 // }
 
+fn query_mid(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie, query mid (3 layers)");
+
+    for upper in [100, 150, 200, 250] {
+        let mut rng = rand::thread_rng();
+        let mut vs: Vec<_> = (0..upper).collect();
+        vs.shuffle(&mut rng);
+        vs.truncate(3);
+
+        group.bench_with_input(BenchmarkId::new("vanilla::Trie", upper), &upper, |b, sz| {
+            let a = Bump::new();
+            let mut t = vanilla::Trie::empty(&a);
+            for i in 0..*sz {
+                for j in 0..*sz {
+                    for k in 0..*sz {
+                        t.insert(&[i, j, k], &a);
+                    }
+                }
+            }
+
+            b.iter(|| {
+                let mut t = &t;
+                for v in &vs {
+                    t = t.advance(v).unwrap();
+                }
+            })
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("vanilla::BumpTrie", upper),
+            &upper,
+            |b, sz| {
+                let a = Bump::new();
+                let mut t = vanilla::BumpTrie::empty(&a);
+                for i in 0..*sz {
+                    for j in 0..*sz {
+                        for k in 0..*sz {
+                            t.insert(&[i, j, k], &a);
+                        }
+                    }
+                }
+
+                b.iter(|| {
+                    let mut t = &t;
+                    for v in &vs {
+                        t = t.advance(v).unwrap();
+                    }
+                })
+            },
+        );
+    }
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default();
-    targets = build_flat
+    targets = query_mid
 }
 criterion_main!(benches);

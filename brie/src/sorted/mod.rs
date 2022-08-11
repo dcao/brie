@@ -1,5 +1,5 @@
 pub mod nested;
 pub mod flat;
-mod vec;
+pub mod vec;
 
 pub use nested::*;

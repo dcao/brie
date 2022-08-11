@@ -44,6 +44,10 @@ where
     fn query(&self, v: &Self::Value) -> bool {
         self.0.contains_key(v)
     }
+
+    fn advance(&self, v: &Self::Value) -> Option<&Self> {
+        self.0.get(v)
+    }
 }
 
 /// A hash trie allocated on a bump allocator.
@@ -70,5 +74,9 @@ where
 
     fn query(&self, v: &Self::Value) -> bool {
         self.0.contains_key(v)
+    }
+
+    fn advance(&self, v: &Self::Value) -> Option<&Self> {
+        self.0.get(v)
     }
 }

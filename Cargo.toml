@@ -1,16 +1,4 @@
-[package]
-name = "brie"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-bumpalo = { version = "3.10", features = ["allocator_api", "collections"] }
-hashbrown = { version = "0.12", features = ["bumpalo"] }
-
-[dev-dependencies]
-criterion = "0.3"
-rand = "0.8"
-
-[[bench]]
-name = "bench_all"
-harness = false
+[workspace]
+members = [
+    "brie",
+]
