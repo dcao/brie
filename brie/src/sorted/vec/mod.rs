@@ -1,10 +1,10 @@
 //! Defines an unmanaged vector type.
 
 mod alloc;
-mod raw;
 mod err;
+mod raw;
 
-use std::{ptr, mem, slice, ops, fmt};
+use std::{fmt, mem, ops, ptr, slice};
 
 use bumpalo::Bump;
 pub use raw::*;
@@ -17,7 +17,10 @@ pub struct BumpVec<'bump, T: 'bump> {
 impl<'bump, T: 'bump> BumpVec<'bump, T> {
     #[inline]
     pub fn new() -> Self {
-        BumpVec { buf: RawVec::new(), len: 0 }
+        BumpVec {
+            buf: RawVec::new(),
+            len: 0,
+        }
     }
 
     #[inline]
@@ -96,7 +99,7 @@ impl<'bump, T: 'bump> BumpVec<'bump, T> {
             }
         }
     }
-    
+
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         unsafe { slice::from_raw_parts_mut(self.as_mut_ptr() as *mut T, self.len()) }
     }

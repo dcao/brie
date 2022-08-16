@@ -3,53 +3,32 @@
 #![feature(alloc_layout_extra)]
 #![feature(slice_ptr_get)]
 #![feature(generic_associated_types)]
-#![feature(generic_const_exprs)]
 #![feature(int_log)]
+#![feature(type_alias_impl_trait)]
 
 use bumpalo::Bump;
 
-pub mod sorted;
-pub mod vanilla;
 pub mod hash;
 pub mod skip_list;
+pub mod sorted;
+pub mod vanilla;
 
-// TODO
-// binary heap trie?
-// hashbrown but without the alloc field
-// sorted trie
-// custom hash trie (optimized for size and no delete!)
-
-// TODO: a Oneshot trait which doesn't have insert or empty.
-//       This is for tries that 
-//       Trieish tries are a subset of Oneshot tries which can
-//       also do insertion and such
-pub trait Trieish<'bump> {
+pub trait Oneshot<'bump, const N: usize>
+where
+    Self: Sized,
+{
     type Value;
-    type Tuple<'a>: AsRef<[Self::Value]> where Self::Value: 'a; // should be [V; N] or &[V]
-
-    fn empty(bump: &'bump Bump) -> Self;
-    fn insert<'a>(&mut self, tuple: Self::Tuple<'a>, bump: &'bump Bump) where Self::Value: 'a;
-    // TODO: what if this changes the type of self?
-    // fn advance(&mut self, v: &Self::Value) -> bool;
-    fn query(&self, v: &Self::Value) -> bool;
-
-    fn advance(&self, _v: &Self::Value) -> Option<&Self> {
-        todo!()
-    }
-
-    fn from_iter<'a, I: IntoIterator<Item = Self::Tuple<'a>>>(iter: I, bump: &'bump Bump) -> Self
+    type KeyIter<const M: usize>: Iterator<Item = &'bump Self::Value>
     where
-        Self: Sized,
-        Self::Value: 'a,
-    {
-        let mut res = Self::empty(bump);
+        Self: 'bump;
 
-        for x in iter.into_iter() {
-            res.insert(x, bump);
-        }
-
-        res
-    }
+    fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'bump Bump) -> Self;
+    fn advance(self, v: &Self::Value) -> Option<Self>;
+    fn intersect<'a, 't: 'bump, const M: usize>(
+        &'t self,
+        others: [&'t Self; M],
+    ) -> Self::KeyIter<M>;
+    // fn materialize(&self, query: [T; M]) -> impl Iterator<Item = [T; M + 1]>;
 }
 
 #[cfg(test)]

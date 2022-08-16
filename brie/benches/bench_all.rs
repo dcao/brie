@@ -1,298 +1,129 @@
-use brie::{
-    sorted::{self, Trie},
-    vanilla, Trieish, hash,
-};
+#![feature(concat_idents)]
+
+use brie::{hash, vanilla, Oneshot};
 use bumpalo::Bump;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use rand::prelude::SliceRandom;
+use itertools::iproduct;
 
-fn build_flat(c: &mut Criterion) {
-    let mut group = c.benchmark_group("trie, build flat (1 layer)");
-
-    for upper in [1_000, 10_000, 100_000] {
-        group.bench_with_input(BenchmarkId::new("vanilla::Trie", upper), &upper, |b, sz| {
-            b.iter(|| {
-                let a = Bump::new();
-                let mut t = vanilla::Trie::empty(&a);
-                for x in 0..*sz {
-                    t.insert(&[x], &a);
-                }
-            })
-        });
-
-        group.bench_with_input(
-            BenchmarkId::new("vanilla::BumpTrie", upper),
-            &upper,
-            |b, sz| {
-                b.iter(|| {
-                    let a = Bump::new();
-                    let mut t = vanilla::BumpTrie::empty(&a);
-                    for i in 0..*sz {
-                        t.insert(&[i], &a);
-                    }
-                })
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("sorted::nested::Trie", upper),
-            &upper,
-            |b, sz| {
-                b.iter(|| {
-                    let a = Bump::new();
-                    let mut t = sorted::nested::Trie::empty(&a);
-                    for i in 0..*sz {
-                        t.insert(&[i], &a);
-                    }
-                })
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("sorted::flat::Trie from_iter", upper),
-            &upper,
-            |b, sz| {
-                b.iter(|| {
-                    let a = Bump::new();
-                    let _t: sorted::flat::Trie<'_, usize, 1, sorted::flat::Write> =
-                        sorted::flat::Trie::from_iter((0..*sz).map(|x| [x]), &a);
-                })
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("hash::Trie from_iter", upper),
-            &upper,
-            |b, sz| {
-                b.iter(|| {
-                    let a = Bump::new();
-                    let _t: hash::Trie<'_, usize, 1> =
-                        hash::Trie::from_sorted::<ahash::AHasher, _>((0..*sz).map(|x| [x]), &a);
-                })
-            },
-        );
-    }
-}
-
-// fn build_mid(c: &mut Criterion) {
-//     let mut group = c.benchmark_group("trie, build mid (3 layers)");
-
-//     for upper in [1, 5, 10, 25, 50, 100] {
-//         group.bench_with_input(BenchmarkId::new("vanilla::Trie", upper), &upper, |b, sz| {
-//             b.iter(|| {
-//                 let mut t = vanilla::Trie::new();
-//                 for i in 0..*sz {
-//                     for j in 0..*sz {
-//                         for k in 0..*sz {
-//                             t.insert_tuple(&[i, j, k]);
-//                         }
-//                     }
-//                 }
-//             })
-//         });
-
-//         group.bench_with_input(
-//             BenchmarkId::new("vanilla::BumpTrie", upper),
-//             &upper,
-//             |b, sz| {
-//                 b.iter(|| {
-//                     let a = Bump::new();
-//                     let mut t = vanilla::BumpTrie::new_in(&a);
-//                     for i in 0..*sz {
-//                         for j in 0..*sz {
-//                             for k in 0..*sz {
-//                                 t.insert_tuple(&a, &[i, j, k]);
-//                             }
-//                         }
-//                     }
-//                 })
-//             },
-//         );
-
-//         group.bench_with_input(
-//             BenchmarkId::new("sorted::Trie", upper),
-//             &upper,
-//             |b, sz| {
-//                 b.iter(|| {
-//                     let a = Bump::new();
-//                     let mut t = sorted::Trie::new();
-//                     for i in 0..*sz {
-//                         for j in 0..*sz {
-//                             for k in 0..*sz {
-//                                 t.insert_tuple(&a, &[i, j, k]);
-//                             }
-//                         }
-//                     }
-//                 })
-//             },
-//         );
-
-//         group.bench_with_input(
-//             BenchmarkId::new("sorted::flat::Trie", upper),
-//             &upper,
-//             |b, sz| {
-//                 b.iter(|| {
-//                     let a = Bump::new();
-//                     let mut t = sorted::flat::Trie::new();
-//                     for i in 0..*sz {
-//                         for j in 0..*sz {
-//                             for k in 0..*sz {
-//                                 t.insert_tuple(&a, [i, j, k]);
-//                             }
-//                         }
-//                     }
-//                 })
-//             },
-//         );
-//     }
-// }
-
-// fn build_nested(c: &mut Criterion) {
-//     let mut group = c.benchmark_group("trie, build nested (5 layers)");
-
-//     for upper in [1, 5, 10, 15] {
-//         group.bench_with_input(BenchmarkId::new("vanilla::Trie", upper), &upper, |b, sz| {
-//             b.iter(|| {
-//                 let mut t = vanilla::Trie::new();
-//                 for i in 0..*sz {
-//                     for j in 0..*sz {
-//                         for k in 0..*sz {
-//                             for l in 0..*sz {
-//                                 for m in 0..*sz {
-//                                     t.insert_tuple(&[i, j, k, l, m]);
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//             })
-//         });
-
-//         group.bench_with_input(
-//             BenchmarkId::new("vanilla::BumpTrie", upper),
-//             &upper,
-//             |b, sz| {
-//                 b.iter(|| {
-//                     let a = Bump::new();
-//                     let mut t = vanilla::BumpTrie::new_in(&a);
-//                     for i in 0..*sz {
-//                         for j in 0..*sz {
-//                             for k in 0..*sz {
-//                                 for l in 0..*sz {
-//                                     for m in 0..*sz {
-//                                         t.insert_tuple(&a, &[i, j, k, l, m]);
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 })
-//             },
-//         );
-
-//         group.bench_with_input(
-//             BenchmarkId::new("sorted::Trie", upper),
-//             &upper,
-//             |b, sz| {
-//                 b.iter(|| {
-//                     let a = Bump::new();
-//                     let mut t = sorted::Trie::new();
-//                     for i in 0..*sz {
-//                         for j in 0..*sz {
-//                             for k in 0..*sz {
-//                                 for l in 0..*sz {
-//                                     for m in 0..*sz {
-//                                         t.insert_tuple(&a, &[i, j, k, l, m]);
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 })
-//             },
-//         );
-
-//         group.bench_with_input(
-//             BenchmarkId::new("sorted::nested::Trie", upper),
-//             &upper,
-//             |b, sz| {
-//                 b.iter(|| {
-//                     let a = Bump::new();
-//                     let mut t = sorted::flat::Trie::new();
-//                     for i in 0..*sz {
-//                         for j in 0..*sz {
-//                             for k in 0..*sz {
-//                                 for l in 0..*sz {
-//                                     for m in 0..*sz {
-//                                         t.insert_tuple(&a, [i, j, k, l, m]);
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 })
-//             },
-//         );
-//     }
-// }
-
-fn query_mid(c: &mut Criterion) {
-    let mut group = c.benchmark_group("trie, query mid (3 layers)");
-
-    for upper in [100, 150, 200, 250] {
-        let mut rng = rand::thread_rng();
-        let mut vs: Vec<_> = (0..upper).collect();
-        vs.shuffle(&mut rng);
-        vs.truncate(3);
-
-        group.bench_with_input(BenchmarkId::new("vanilla::Trie", upper), &upper, |b, sz| {
+macro_rules! build_flat {
+    ($g:expr, $ty:ty, $sz:expr) => {
+        $g.bench_with_input(BenchmarkId::new(stringify!($ty), $sz), &$sz, |b, sz| {
             let a = Bump::new();
-            let mut t = vanilla::Trie::empty(&a);
-            for i in 0..*sz {
-                for j in 0..*sz {
-                    for k in 0..*sz {
-                        t.insert(&[i, j, k], &a);
-                    }
-                }
-            }
+            b.iter(|| {
+                let iter = (0..*sz).map(|x| [x]);
+                <$ty>::from_iter(iter, &a)
+            });
+        });
+    };
+}
+
+macro_rules! build_mid {
+    ($g:expr, $ty:ty, $sz:expr) => {
+        $g.bench_with_input(BenchmarkId::new(stringify!($ty), $sz), &$sz, |b, sz| {
+            let a = Bump::new();
+            b.iter(|| {
+                let iter = iproduct!(0..*sz, 0..*sz, 0..*sz).map(|(x, y, z)| [x, y, z]);
+                <$ty>::from_iter(iter, &a)
+            });
+        });
+    };
+}
+
+macro_rules! build_nested {
+    ($g:expr, $ty:ty, $sz:expr) => {
+        $g.bench_with_input(BenchmarkId::new(stringify!($ty), $sz), &$sz, |b, sz| {
+            let a = Bump::new();
+            b.iter(|| {
+                let iter = iproduct!(0..*sz, 0..*sz, 0..*sz, 0..*sz, 0..*sz)
+                    .map(|(x, y, z, a, b)| [x, y, z, a, b]);
+                <$ty>::from_iter(iter, &a)
+            });
+        });
+    };
+}
+
+macro_rules! intersect_nested {
+    ($g:expr, $ty:ty, $sz:expr) => {
+        $g.bench_with_input(BenchmarkId::new(stringify!($ty), $sz), &$sz, |b, sz| {
+            let a = Bump::new();
+            let iter = iproduct!(0..*sz, 0..*sz, 0..*sz, 0..*sz, 0..*sz)
+                .map(|(x, y, z, a, b)| [x, y, z, a, b]);
+            let t1 = {
+                <$ty>::from_iter(iter.clone(), &a)
+            };
+            let t2 = {
+                let i = iter.clone().filter(|vs| vs[0] % 2 == 0);
+                <$ty>::from_iter(i, &a)
+            };
+            let t3 = {
+                let i = iter.clone().filter(|vs| vs[0] % 3 == 0);
+                <$ty>::from_iter(i, &a)
+            };
+            let t4 = {
+                let i = iter.clone().filter(|vs| vs[0] % 5 == 0);
+                <$ty>::from_iter(i, &a)
+            };
 
             b.iter(|| {
-                let mut t = &t;
-                for v in &vs {
-                    t = t.advance(v).unwrap();
+                for key in <$ty as Oneshot<5>>::intersect::<3>(&t1, [&t2, &t3, &t4]) {
+                    // no-op
+                    let _k = key;
                 }
-            })
+            });
         });
+    };
+}
 
-        group.bench_with_input(
-            BenchmarkId::new("vanilla::BumpTrie", upper),
-            &upper,
-            |b, sz| {
-                let a = Bump::new();
-                let mut t = vanilla::BumpTrie::empty(&a);
-                for i in 0..*sz {
-                    for j in 0..*sz {
-                        for k in 0..*sz {
-                            t.insert(&[i, j, k], &a);
-                        }
-                    }
-                }
 
-                b.iter(|| {
-                    let mut t = &t;
-                    for v in &vs {
-                        t = t.advance(v).unwrap();
-                    }
-                })
-            },
-        );
+fn bench_build_flat(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie, build flat (1 layer)");
+    group.sample_size(10);
+
+    for upper in [1_000, 10_000] {
+        build_flat!(group, vanilla::Trie<_>, upper);
+        build_flat!(group, vanilla::BumpTrie<_>, upper);
+        build_flat!(group, hash::ManagedTrie<_, 1>, upper);
     }
 }
 
+fn bench_build_mid(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie, build mid (3 layers)");
+    group.sample_size(10);
+
+    for upper in [1, 5, 10, 25, 50, 100] {
+        build_mid!(group, vanilla::Trie<_>, upper);
+        build_mid!(group, vanilla::BumpTrie<_>, upper);
+        build_mid!(group, hash::ManagedTrie<_, 3>, upper);
+    }
+}
+
+fn bench_build_nested(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie, build nested (5 layers)");
+    group.sample_size(10);
+
+    for upper in [1, 5, 10, 15] {
+        build_nested!(group, vanilla::Trie<_>, upper);
+        build_nested!(group, vanilla::BumpTrie<_>, upper);
+        build_nested!(group, hash::ManagedTrie<_, 5>, upper);
+    }
+}
+
+fn bench_intersect_nested(c: &mut Criterion) {
+    let mut group = c.benchmark_group("trie, intersect nested (5 layers)");
+    group.sample_size(10);
+
+    for upper in [10, 15] {
+        // intersect_nested!(group, vanilla::Trie<_>, upper);
+        // intersect_nested!(group, vanilla::BumpTrie<_>, upper);
+        intersect_nested!(group, hash::ManagedTrie<_, 5>, upper);
+    }
+}
+
+// TODO: query, intersect
 criterion_group! {
     name = benches;
     config = Criterion::default();
-    targets = build_flat, query_mid
+    targets = bench_build_flat, bench_build_mid, bench_build_nested, bench_intersect_nested
 }
 criterion_main!(benches);

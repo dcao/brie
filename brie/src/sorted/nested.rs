@@ -2,10 +2,10 @@
 
 use bumpalo::Bump;
 
-use core::{ptr, slice, fmt};
+use core::{fmt, ptr, slice};
 use std::{cmp::Ordering, ops};
 
-use crate::Trieish;
+use crate::Oneshot;
 
 use super::vec::RawVec;
 
@@ -86,7 +86,7 @@ where
             // Write it in, overwriting the first copy of the `index`th
             // element.
             ptr::write(p, element);
-            
+
             self.set_len(len + 1);
 
             &mut *p
@@ -113,17 +113,14 @@ where
     // TODO: maybe actually impl the entry api
     pub fn get_or_insert<F>(&mut self, k: K, mut vf: F, bump: &'bump Bump) -> &mut V
     where
-        F: FnMut() -> V
+        F: FnMut() -> V,
     {
         match self.binary_search_by(|v| k.cmp(v)) {
             // SAFETY: binary_search_by guarantees found < len
-            Ok(found) => unsafe { &mut self.get_unchecked_mut(found).1 }
-            Err(none) => {
-                &mut self.insert_at_ix(none, (k, vf()), bump).1
-            }
+            Ok(found) => unsafe { &mut self.get_unchecked_mut(found).1 },
+            Err(none) => &mut self.insert_at_ix(none, (k, vf()), bump).1,
         }
     }
-
 
     #[inline]
     pub fn binary_search_by<'a, F>(&'a self, mut f: F) -> Result<usize, usize>
@@ -190,27 +187,66 @@ impl<'bump, K: 'bump + fmt::Debug, V: 'bump + fmt::Debug> fmt::Debug for Map<'bu
 
 pub struct Trie<'a, T>(Map<'a, T, Self>);
 
-impl<'b, T> Trieish<'b> for Trie<'b, T>
+impl<'bump, V, const N: usize> Oneshot<'bump, N> for Trie<'bump, V>
 where
-    T: Ord + Eq + Clone
+    V: Ord + Clone + 'bump,
 {
-    type Value = T;
-    type Tuple<'a> = &'a [T] where T: 'a;
+    type Value = V;
+    type KeyIter<const M: usize> = impl Iterator<Item = &'bump Self::Value>
+    where Self: 'bump;
 
-    fn empty(_bump: &'b Bump) -> Self {
-        Self(Map::new())
-    }
+    fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'bump Bump) -> Self {
+        let mut res = Self(Map::new());
 
-    fn insert<'a>(&mut self, tuple: &'a [T], arena: &'b Bump) where T: 'a {
-        let mut trie = self;
-        for v in tuple {
-            trie = trie
-                .0
-                .get_or_insert(v.clone(), || Self(Map::new()), arena);
+        for tuple in iter.into_iter() {
+            let mut trie = &mut res;
+            for v in tuple {
+                trie = trie.0.get_or_insert(v.clone(), || Self(Map::new()), bump);
+            }
         }
+
+
+        res
     }
 
-    fn query(&self, v: &Self::Value) -> bool {
+    fn advance(self, v: &Self::Value) -> Option<Self> {
         todo!()
     }
+
+    fn intersect<'a, 't: 'bump, const M: usize>(
+        &'t self,
+        others: [&'t Self; M],
+    ) -> Self::KeyIter<M> {
+        std::iter::from_fn(|| todo!())
+    }
 }
+
+// impl<'b, T> Trieish<'b> for Trie<'b, T>
+// where
+//     T: Ord + Eq + Clone,
+// {
+//     type Value = T;
+//     type Tuple<'a> = &'a [T] where T: 'a;
+
+//     fn empty(_bump: &'b Bump) -> Self {
+//         Self(Map::new())
+//     }
+
+//     fn insert<'a>(&mut self, tuple: &'a [T], arena: &'b Bump)
+//     where
+//         T: 'a,
+//     {
+//         let mut trie = self;
+//         for v in tuple {
+//             trie = trie.0.get_or_insert(v.clone(), || Self(Map::new()), arena);
+//         }
+//     }
+
+//     fn advance(&self, v: &Self::Value) -> Option<&Self> {
+//         self.0.get(v)
+//     }
+
+//     fn query(&self, v: &Self::Value) -> bool {
+//         todo!()
+//     }
+// }

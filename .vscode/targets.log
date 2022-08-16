@@ -6,11 +6,8 @@ make all --print-data-base --no-builtin-variables --no-builtin-rules --question
 # PARTICULAR PURPOSE.
 
 # This program built for i386-apple-darwin11.3.0
- 
-make: *** No rule to make target `all'.  Stop.
 
-
-# Make data base, printed on Wed Aug 10 11:14:22 2022
+# Make data base, printed on Mon Aug 15 11:20:59 2022
 
 # Variables
 
@@ -53,6 +50,8 @@ PATH = /Users/david/.bun/bin:/opt/homebrew/opt/openjdk/bin:/Users/david/Library/
 # environment
 GOPATH = /Users/David/Documents/dev/project-4-dcao
 # environment
+LaunchInstanceID = 278DA8F8-490E-4640-85A8-42FEEC531432
+# environment
 ELECTRON_RUN_AS_NODE = 1
 # environment
 LDFLAGS = -L/opt/homebrew/opt/icu4c/lib
@@ -81,7 +80,7 @@ HOME = /Users/david
 # default
 MAKEFILEPATH = $(shell /usr/bin/xcode-select -print-path 2>/dev/null || echo /Developer)/Makefiles
 # environment
-VSCODE_CODE_CACHE_PATH = /Users/david/Library/Application Support/Code/CachedData/da76f93349a72022ca4670c1b84860304616aaa2
+VSCODE_CODE_CACHE_PATH = /Users/david/Library/Application Support/Code/CachedData/6d9b74a70ca9c7733b29f0456fd8195364076dda
 # environment
 LOGNAME = david
 # environment
@@ -115,7 +114,7 @@ TMPDIR = /var/folders/mt/s1gr32_x09s18x21098ms8100000gn/T/
 # automatic
 *F = $(notdir $*)
 # environment
-VSCODE_IPC_HOOK = /Users/david/Library/Application Support/Code/1.70.0-main.sock
+VSCODE_IPC_HOOK = /Users/david/Library/Application Support/Code/1.70.1-main.sock
 # environment
 MallocNanoZone = 0
 # environment
@@ -127,7 +126,7 @@ MFLAGS = -Rrqp
 # automatic
 *D = $(patsubst %/,%,$(dir $*))
 # environment
-XPC_SERVICE_NAME = application.com.microsoft.VSCode.70544918.70544924
+XPC_SERVICE_NAME = application.com.microsoft.VSCode.75314961.75314967
 # environment
 HOMEBREW_PREFIX = /opt/homebrew
 # automatic
@@ -148,6 +147,8 @@ MAKEFILES :=
 LEDGER_FILE = /Users/david/default/ledger/spending.ldg
 # environment
 LC_ALL = C
+# environment
+SECURITYSESSIONID = 186a5
 # automatic
 ^F = $(notdir $^)
 # default
@@ -157,9 +158,9 @@ MAKELEVEL := 0
 # environment
 LANG = C
 # environment
-VSCODE_PID = 1200
+VSCODE_PID = 50538
 # variable set hash-table stats:
-# Load=72/1024=7%, Rehash=0, Collisions=1/92=1%
+# Load=74/1024=7%, Rehash=0, Collisions=1/94=1%
 
 # Pattern-specific Variable Values
 
@@ -241,6 +242,8 @@ GNUmakefile:
 # strcache size: total = 0 / max = 0 / min = 4096 / avg = 0
 # strcache free: total = 0 / max = 0 / min = 4096 / avg = 0
 
-# Finished Make data base on Wed Aug 10 11:14:22 2022
+# Finished Make data base on Mon Aug 15 11:20:59 2022
 
  
+make: *** No rule to make target `all'.  Stop.
+

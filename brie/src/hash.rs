@@ -3,53 +3,124 @@
 
 use std::{
     hash::{Hash, Hasher},
+    iter::{self, FusedIterator},
     marker::PhantomData,
-    ptr::NonNull,
+    mem::MaybeUninit,
 };
 
 use bumpalo::Bump;
+use itertools::Itertools;
 
-use crate::sorted::vec::BumpVec;
+use crate::{sorted::vec::BumpVec, Oneshot};
 
 // returns (cap, total_bits, hash_bits)
 fn get_bit_sizes<const N: usize>(iter_len: usize) -> (usize, u32, u32) {
-    let (capacity, total_bits) = {
+    let iter_len = iter_len * N;
+    let (hash_bits, hash_cap) = {
         let size = iter_len as f64;
         let upsize = (size * 1.25).ceil() as usize;
         let v = upsize.next_power_of_two();
-        (v, v.checked_log2().unwrap())
+        (v.checked_log2().unwrap(), v)
     };
-    let hash_bits = {
+    let lvl_bits = {
         let v = N.next_power_of_two();
-        total_bits - v.checked_log2().unwrap()
+        v.checked_log2().unwrap()
     };
+    let (capacity, total_bits) = (hash_cap << lvl_bits, hash_bits + lvl_bits);
 
     (capacity, total_bits, hash_bits)
 }
 
-// TODO: a StatefulTrie which contains query/hash_key state
-//       so that it'll work with the Trieish trait
+/// A dumb Trie that also manages query advancing state
+/// only for benching purposes!
+pub struct ManagedTrie<'bump, T, const N: usize> {
+    query: Vec<T>,
+    trie: Trie<'bump, T, N>,
+}
+
+impl<'b, T: Clone + Hash + Ord + Eq + Default + std::fmt::Debug, const N: usize> Oneshot<'b, N>
+    for ManagedTrie<'b, T, N>
+{
+    type Value = T;
+    type KeyIter<const M: usize> = impl Iterator<Item = &'b T>;
+
+    fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'b Bump) -> Self {
+        let mut elems = iter.into_iter().collect::<Vec<_>>();
+        elems.sort_unstable();
+        Self {
+            query: Vec::new(),
+            trie: Trie::from_sorted::<ahash::AHasher, _>(elems.into_iter(), bump).unwrap(),
+        }
+    }
+
+    fn advance(mut self, v: &Self::Value) -> Option<Self> {
+        self.query.push(v.clone());
+
+        Some(self)
+    }
+
+    fn intersect<'a, 't: 'b, const M: usize>(&'t self, others: [&'t Self; M]) -> Self::KeyIter<M> {
+        let from = self.trie.query_to_ix::<ahash::AHasher>(self.query.as_ref());
+        let others: [(&'t Trie<_, N>, Ix); M] = unsafe {
+            let mut arr: [_; M] = MaybeUninit::uninit().assume_init();
+            for (item, mt) in (&mut arr[..]).into_iter().zip(others) {
+                std::ptr::write(
+                    item,
+                    (
+                        &mt.trie,
+                        mt.trie.query_to_ix::<ahash::AHasher>(self.query.as_ref()),
+                    ),
+                );
+            }
+            arr
+        };
+
+        self.trie
+            .intersect_unchecked::<ahash::AHasher, M>(from, others)
+            .map(|x| x.0)
+    }
+}
 
 pub struct Trie<'bump, T, const N: usize> {
-    hash_keys: BumpVec<'bump, Key>,
-    extra_sibs: BumpVec<'bump, Key>,
+    hash_keys: BumpVec<'bump, Key<T>>,
+    extra_sibs: BumpVec<'bump, Key<T>>,
+    pub root: Ix,
     data: BumpVec<'bump, [T; N]>,
 }
 
 impl<'bump, T, const N: usize> Trie<'bump, T, N>
 where
-    T: Clone + Hash + Default + PartialEq + Eq,
+    T: Clone + Hash + Default + PartialEq + Eq + Ord + std::fmt::Debug,
 {
-    pub fn from_sorted<H, I>(iter: I, bump: &'bump Bump) -> Self
+    pub fn from_sorted<H, I>(iter: I, bump: &'bump Bump) -> Option<Self>
     where
-        I: ExactSizeIterator<Item = [T; N]>,
+        I: IntoIterator<Item = [T; N]>,
         H: Hasher + Default,
     {
         let iter = iter.into_iter();
-        let (capacity, _total_bits, hash_bits) = get_bit_sizes::<N>(iter.len());
+        let iter_len = if let Some(ub) = iter.size_hint().1 {
+            if iter.size_hint().0 > 0 {
+                ub
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+
+        let (capacity, _total_bits, hash_bits) = get_bit_sizes::<N>(iter_len);
         let mut hash_keys = BumpVec::with_capacity_in(capacity, bump);
-        let mut extra_sibs: BumpVec<'bump, Key> = BumpVec::with_capacity_in(capacity, bump);
+        let mut extra_sibs: BumpVec<'bump, Key<T>> = BumpVec::with_capacity_in(capacity, bump);
         let mut data = BumpVec::with_capacity_in(capacity, bump);
+        let mut root = Ix::none();
+
+        let mut cur_sibs: [(T, Ix); N] = unsafe {
+            let mut arr: [_; N] = MaybeUninit::uninit().assume_init();
+            for item in &mut arr[..] {
+                std::ptr::write(item, Default::default());
+            }
+            arr
+        };
 
         // Zero-initialize keys
         for _i in 0..capacity {
@@ -59,90 +130,124 @@ where
         for v in iter {
             // For each tuple of values we need to create corresponding entries in the
             // keys list!
-            let mut prev_hash = None;
-            let mut cur_key: Option<Result<usize, usize>> = None;
+            let mut cur_ix = Ix::none();
+            let mut sib_set = false;
 
             for (level, t) in v.iter().enumerate() {
-                let ix = Self::calc_hash_keys_ix::<H>(prev_hash, t, level, hash_bits);
-
-                // Go next?
-                // either ix in hashed or ix in sibbed
-                let mut new_key: Result<usize, usize> = Ok(ix);
-                let mut z = unsafe { hash_keys.get_unchecked(ix) }.sibling;
-                if !z.is_none() {
-                    while !z.is_none() {
-                        z = unsafe { extra_sibs.get_unchecked(z.0) }.sibling;
-                    }
-
-                    let new_ix = extra_sibs.len();
-                    new_key = Err(new_ix);
+                let ix = Self::calc_hash_keys_ix::<H>(cur_ix, t, level, hash_bits);
+                if root.is_none() {
+                    root = Ix::hashed(ix);
                 }
 
-                if let Err(new_ix) = new_key {
-                    extra_sibs.push(Key::default(), bump);
-                    unsafe { extra_sibs.get_unchecked_mut(z.0) }.sibling = Sibling::sibbed(new_ix);
-                }
-
-                if let Some(prev_key) = cur_key {
-                    let prev = match prev_key {
-                        Ok(ix) => unsafe { hash_keys.get_unchecked_mut(ix) },
-                        Err(ix) => unsafe { extra_sibs.get_unchecked_mut(ix) },
+                // Step 1
+                // Find what key block this should correspond to
+                let mut new_key: Result<usize, (Result<usize, Sibling>, usize)> = Ok(ix);
+                let b = &hash_keys[ix];
+                if !b.child.is_none() && (b.parent_ix != cur_ix || &b.data != t) {
+                    let fst = if b.hash_sib.is_none() {
+                        Ok(ix)
+                    } else {
+                        let mut z = b.hash_sib;
+                        loop {
+                            let zp = extra_sibs[z.0].hash_sib;
+                            if zp.is_none() {
+                                break;
+                            } else {
+                                z = zp;
+                            }
+                        }
+                        Err(z)
                     };
 
-                    match new_key {
-                        Ok(ix) => {
-                            if prev.child.is_none() {
-                                prev.child = Child::hashed(ix);
-                            }
+                    let new_ix = extra_sibs.len();
+                    new_key = Err((fst, new_ix));
+                }
+
+                // Step 2
+                // We have our key block.
+                // If we didn't need a sib, set the params appropriately
+                // If we did need a sib, set the previous sibs attributes appropriately
+                match new_key {
+                    Ok(hash_ix) => {
+                        let new_ix = Ix::hashed(hash_ix);
+
+                        let this = &mut hash_keys[hash_ix];
+                        this.data = t.clone();
+                        this.parent_ix = cur_ix;
+
+                        if cur_ix.is_hashed() {
+                            hash_keys[cur_ix.0].child = Child::hashed(hash_ix);
+                        } else if !cur_ix.is_none() {
+                            extra_sibs[cur_ix.0 % (1 << (usize::BITS - 1))].child =
+                                Child::hashed(hash_ix);
                         }
-                        Err(ix) => {
-                            if prev.child.is_none() {
-                                prev.child = Child::sibbed(ix);
-                            }
+
+                        cur_ix = new_ix;
+                    }
+                    Err((sib_at, new_ix)) => {
+                        extra_sibs.push(
+                            Key {
+                                data: t.clone(),
+                                parent_ix: cur_ix,
+                                ..Key::default()
+                            },
+                            bump,
+                        );
+                        let prev = match sib_at {
+                            Ok(hash_ix) => &mut hash_keys[hash_ix],
+                            Err(sib_ix) => &mut extra_sibs[sib_ix.0],
+                        };
+                        prev.hash_sib = Sibling::sibbed(new_ix);
+
+                        if cur_ix.is_hashed() {
+                            hash_keys[cur_ix.0].child = Child::sibbed(new_ix);
+                        } else if !cur_ix.is_none() {
+                            extra_sibs[cur_ix.0 % (1 << (usize::BITS - 1))].child =
+                                Child::sibbed(new_ix);
                         }
+
+                        cur_ix = Ix::sibbed(new_ix);
                     }
                 }
 
-                cur_key = Some(new_key);
-                prev_hash = Some(ix);
+                // Step 3
+                // Set sibs appropriately
+                let (prev_val, prev_ix) = &cur_sibs[level];
+
+                if !prev_ix.is_none() && prev_val != t && !sib_set {
+                    if prev_ix.is_hashed() {
+                        hash_keys[prev_ix.0].tuple_sib = cur_ix;
+                    } else {
+                        extra_sibs[prev_ix.0 % (1 << (usize::BITS - 1))].tuple_sib = cur_ix;
+                    }
+
+                    sib_set = true;
+                }
+
+                cur_sibs[level] = (t.clone(), cur_ix);
             }
 
             data.push(v, bump);
-            match cur_key.unwrap() {
+            match cur_ix.as_enum().unwrap() {
                 Ok(ix) => {
-                    unsafe { hash_keys.get_unchecked_mut(ix) }.child = Child::data(data.len() - 1);
+                    hash_keys[ix].child = Child::data(data.len() - 1);
                 }
                 Err(ix) => {
-                    unsafe { extra_sibs.get_unchecked_mut(ix) }.child = Child::data(data.len() - 1);
+                    extra_sibs[ix].child = Child::data(data.len() - 1);
                 }
             }
         }
 
-        Self {
+        Some(Self {
+            root,
             hash_keys,
             extra_sibs,
             data,
-        }
+        })
     }
 
-    pub fn advance<H: Hasher + Default>(
-        &self,
-        prev: Option<usize>,
-        value: &T,
-        level: usize,
-    ) -> usize {
-        let (_, _, hash_bits) = get_bit_sizes::<N>(self.data.len());
-        Self::calc_hash_keys_ix::<H>(prev, value, level, hash_bits)
-    }
-
-    // Return iterator
-    pub fn materialize<'a>(
-        &self,
-        hash_ix: usize,
-        query: &'a [T],
-    ) -> Option<Materialize<'a, 'bump, T, N>> {
-        // Given a query so far, we want to materialize an iterator which goes through all
-        // items starting with that query.
+    // Assumes Ix is valid
+    fn get_data_ix_unchecked<'a>(&self, ix: Ix) -> usize {
         // Our backing array is in sorted order so all we need to do is actually find the
         // correct start to begin with.
         // Basically, we go to hash_ix in the hash_keys array.
@@ -151,81 +256,175 @@ where
         // If not, we go to the next sib of the hash_ix and do the same thing
         // If none of the sibs check out, we can't materialize (the query doesn't exist
         // and there's some sort of mismatch between hash_ix and query)
-        let mut cur: Result<usize, usize> = Ok(hash_ix);
+        let mut block = if ix.is_none() {
+            panic!("can't use null ix");
+        } else if ix.is_hashed() {
+            &self.hash_keys[ix.0]
+        } else {
+            &self.extra_sibs[ix.0 % (1 << (usize::BITS - 1))]
+        };
 
-        // Outer loop: check cur block if it works
+        // Descend into children
         loop {
-            // Inner loop: descend into children
-            let mut block = match cur {
-                Ok(hash_ix) => unsafe { self.hash_keys.get_unchecked(hash_ix) },
-                Err(sib_ix) => unsafe { self.extra_sibs.get_unchecked(sib_ix) },
-            };
+            // With the block reference, we start descending into the children
+            // Get the block child and figure out what ix it's pointing to
+            if block.child.is_none() {
+                panic!("all children should be initialized");
+            }
 
-            let (data_ix, data) = loop {
-                // With the block reference, we start descending into the children
-                // Get the block child and figure out what ix it's pointing to
-                if block.child.is_none() {
-                    panic!("all children should be initialized");
-                }
-
-                let child_top = block.child.top_bits();
-                if child_top == 0b00 {
-                    // Child is a hashed ix
-                    block = unsafe {
-                        self.hash_keys
-                            .get_unchecked(block.child.0 % (1 << (usize::BITS - 2)))
-                    };
-                } else if child_top == 0b01 {
-                    // Child is a sibbed ix
-                    block = unsafe {
-                        self.extra_sibs
-                            .get_unchecked(block.child.0 % (1 << (usize::BITS - 2)))
-                    };
-                } else {
-                    // Child is a data ptr
-                    // Return the data we get
-                    let data_ix = block.child.0 % (1 << (usize::BITS - 1));
-                    break (data_ix, unsafe { self.data.get_unchecked(data_ix) });
-                }
-            };
-
-            // Compare query to data
-            if query.iter().zip(data.iter()).all(|(x, y)| x == y) {
-                // This shit is valid!
-                // We get a NonNull ptr to this element in the data arr
-                let ptr = NonNull::from(unsafe { self.data.get_unchecked(data_ix) });
-                // Get a pointer to the very end of the data arr, so the iter knows
-                // when to stop
-                let end = unsafe { self.data.as_ptr().add(self.data.len()) };
-
-                break Some(Materialize {
-                    ptr,
-                    end,
-                    query,
-                    _marker: PhantomData,
-                });
+            let child_top = block.child.top_bits();
+            if child_top == 0b00 {
+                // Child is a hashed ix
+                block = &self.hash_keys[block.child.0 % (1 << (usize::BITS - 2))];
+            } else if child_top == 0b01 {
+                // Child is a sibbed ix
+                block = &self.extra_sibs[block.child.0 % (1 << (usize::BITS - 2))];
             } else {
-                // This isn't valid.
-                // There are two cases: either the current block has a sibling
-                // and we go to that, or it doesn't and we give up
-                let this = match cur {
-                    Ok(hash_ix) => unsafe { self.hash_keys.get_unchecked(hash_ix) },
-                    Err(sib_ix) => unsafe { self.extra_sibs.get_unchecked(sib_ix) },
-                };
-
-                if this.sibling.is_none() {
-                    // Give up D:
-                    break None;
-                } else {
-                    // Try with sibling
-                    cur = Err(this.sibling.0);
-                }
+                // Child is a data ptr
+                // Return the data we get
+                let data_ix = block.child.0 % (1 << (usize::BITS - 1));
+                break data_ix;
             }
         }
     }
 
+    // Return iterator
+    // Assumes Ix exists in arrays
+    pub fn materialize_unchecked<'a, 't>(
+        &'t self,
+        query: &'a [T],
+        ix: Ix,
+    ) -> Materialize<'a, 'bump, 't, T, N> {
+        if ix.is_none() {
+            Materialize {
+                query: &[],
+                data: &self.data,
+                idx: 0,
+                end: self.data.len(),
+                _marker: PhantomData,
+            }
+        } else {
+            let idx = self.get_data_ix_unchecked(ix);
+
+            Materialize {
+                query,
+                data: &self.data,
+                idx,
+                end: self.data.len(),
+                _marker: PhantomData,
+            }
+        }
+    }
+
+    /// Intersects the keys of M + 1 tries given a query.
+    /// Performs this by materializing all tries and going through the elements
+    /// of all tries at once, finding points where the keys match up.
+    /// Assumes Ix is valid
+    pub fn intersect_unchecked<'a, 't: 'bump, H: Hasher + Default, const M: usize>(
+        &'t self,
+        from: Ix,
+        mut others: [(&'t Trie<'bump, T, N>, Ix); M],
+    ) -> impl Iterator<Item = (&'bump T, Ix)> + 'a
+    where
+        'bump: 'a,
+        't: 'a,
+    {
+        let mut cur_ix = if from.is_none() {
+            self.root
+        } else if from.is_hashed() {
+            self.hash_keys[from.0]
+                .child
+                .as_ix()
+                .expect("can't use data ix")
+        } else {
+            self.extra_sibs[from.0 % (1 << (usize::BITS - 1))]
+                .child
+                .as_ix()
+                .expect("can't use data ix")
+        };
+
+        for (other_trie, other_ix) in others.iter_mut() {
+            *other_ix = if other_ix.is_none() {
+                other_trie.root
+            } else if other_ix.is_hashed() {
+                other_trie.hash_keys[other_ix.0]
+                    .child
+                    .as_ix()
+                    .expect("can't use data ix")
+            } else {
+                other_trie.extra_sibs[other_ix.0 % (1 << (usize::BITS - 1))]
+                    .child
+                    .as_ix()
+                    .expect("can't use data ix")
+            };
+        }
+
+        let mut cur_max = None;
+
+        iter::from_fn(move || {
+            // Let's look at the current element
+            'outer: loop {
+                let xk = if cur_ix.is_hashed() {
+                    &self.hash_keys[cur_ix.0]
+                } else if !cur_ix.is_none() {
+                    &self.extra_sibs[cur_ix.0 % (1 << (usize::BITS - 1))]
+                } else {
+                    return None;
+                };
+
+                if let Some(prev_max) = cur_max {
+                    if prev_max > &xk.data {
+                        cur_ix = xk.tuple_sib;
+                        continue 'outer;
+                    }
+                }
+
+                cur_max = Some(&xk.data);
+
+                // For each of the other tries
+                for (other_trie, other_ix) in others.iter_mut() {
+                    'inner: loop {
+                        let yk = if other_ix.is_hashed() {
+                            &other_trie.hash_keys[other_ix.0]
+                        } else if !other_ix.is_none() {
+                            &other_trie.extra_sibs[other_ix.0 % (1 << (usize::BITS - 1))]
+                        } else {
+                            return None;
+                        };
+
+                        if let Some(prev_max) = cur_max {
+                            if prev_max > &yk.data {
+                                *other_ix = yk.tuple_sib;
+                                continue 'inner;
+                            }
+                        }
+
+                        if &yk.data > &xk.data {
+                            cur_max = Some(&yk.data);
+                            // Advancing xk taken care of above
+                            continue 'outer;
+                        } else if &yk.data == &xk.data {
+                            *other_ix = yk.tuple_sib;
+                            break 'inner;
+                        } else {
+                            *other_ix = yk.tuple_sib;
+                            continue 'inner;
+                        }
+                    }
+                }
+
+                // We've passed the gauntlet
+                let res = Some((&xk.data, cur_ix));
+                // Advance xk
+                cur_ix = xk.tuple_sib;
+                return res;
+            }
+        })
+        .fuse()
+    }
+
     fn calc_hash_keys_ix<H: Hasher + Default>(
-        prev: Option<usize>,
+        prev: Ix,
         value: &T,
         level: usize,
         hash_bits: u32,
@@ -240,24 +439,68 @@ where
         // xxxyyyyy
         // ---
         // level
-        let hash_mask = 1 << hash_bits - 1;
+        let hash_mask = (1 << hash_bits) - 1;
         let hv = (hasher.finish() & hash_mask) as usize;
         let lv = level << hash_bits;
 
         let ix = hv | lv;
 
+        // println!();
+        // println!("calc_hash_keys_ix");
+        // println!("hash_bits: {}", hash_bits);
+        // println!("hf {:#066b}", hasher.finish());
+        // println!("hm {:#066b}", hash_mask);
+        // println!("hv {:#066b}", hv);
+        // println!("lv {:#066b}", lv);
+        // println!("ix {:#066b}", ix);
+
         ix
+    }
+
+    pub fn query_to_ix<H: Hasher + Default>(&self, query: &[T]) -> Ix {
+        let (_capacity, _total_bits, hash_bits) = get_bit_sizes::<N>(self.data.len());
+        let mut cur = Ix::none();
+
+        for (l, q) in query.iter().enumerate() {
+            let hk = Self::calc_hash_keys_ix::<H>(cur, q, l, hash_bits);
+            cur = Ix::hashed(hk);
+
+            // Look at block.
+            // If parent value matches and key value matches, we're good
+            // Otherwise, go to hash sib
+            loop {
+                let cur_block = if cur.is_none() {
+                    return Ix::none();
+                } else if cur.is_hashed() {
+                    &self.hash_keys[cur.0]
+                } else {
+                    &self.extra_sibs[cur.0 % (1 << (usize::BITS - 1))]
+                };
+
+                if cur_block.parent_ix == cur && &cur_block.data == q {
+                    break;
+                } else {
+                    cur = cur_block.hash_sib.as_ix();
+                }
+            }
+        }
+
+        cur
     }
 }
 
-pub struct Materialize<'a, 'b, T, const N: usize> {
+pub struct Materialize<'a, 'b, 't, T, const N: usize> {
     query: &'a [T],
-    ptr: NonNull<[T; N]>,
-    end: *const [T; N],
+    data: &'t BumpVec<'b, [T; N]>,
+    idx: usize,
+    end: usize,
     _marker: PhantomData<&'b [T; N]>,
 }
 
-impl<'a, 'b, T: PartialEq, const N: usize> Iterator for Materialize<'a, 'b, T, N> {
+impl<'a, 'b, 't, T: PartialEq, const N: usize> Iterator for Materialize<'a, 'b, 't, T, N>
+where
+    't: 'b,
+{
     type Item = &'b [T; N];
 
     #[inline]
@@ -265,48 +508,47 @@ impl<'a, 'b, T: PartialEq, const N: usize> Iterator for Materialize<'a, 'b, T, N
         // We have two break conditions:
         // - We're at the end of the of the array (ptr == end)
         // - The query no longer matches the data
-        unsafe {
-            let raw = self.ptr.as_ptr();
-            if raw as *const _ == self.end {
-                None
-            } else {
-                let val = self.ptr.as_ref();
-                if val.iter().zip(self.query.iter()).any(|(x, y)| x != y) {
-                    None
-                } else {
-                    self.ptr = NonNull::new_unchecked(raw.add(1));
-                    Some(val)
-                }
+        if self.idx == self.end {
+            None
+        } else {
+            unsafe {
+                let idx = self.idx;
+                self.idx += 1;
+                Some(self.data.get_unchecked(idx))
             }
         }
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        // TODO: if slice len = N we know it's max 1 upper bound
-        // TODO: upper bound end - ptr
         let upper = if self.query.len() == N {
             Some(1)
         } else {
-            Some(unsafe { self.end.offset_from(self.ptr.as_ptr() as *const _) } as usize)
+            Some(self.end - self.idx)
         };
 
         (0, upper)
     }
 }
 
+impl<'a, 'b, 't, T: PartialEq, const N: usize> FusedIterator for Materialize<'a, 'b, 't, T, N> where
+    't: 'b
+{
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
-struct Key {
+struct Key<T> {
+    parent_ix: Ix,
+    tuple_sib: Ix,
+    data: T,
     // index into extra_sibs
     // all 1s is None
-    sibling: Sibling,
+    hash_sib: Sibling,
     // 00xx...xxx => hashed ix
     // 01yy...yyy => sibbed ix
     // 1zzz...zzz => data ix
     // 1111...111 => no child/uninit
     child: Child,
-    // both usize changes reduce size of Key from 32 to 16.
-    // storing offsets instead of ixs might reduce even more
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -323,6 +565,10 @@ impl Sibling {
 
     pub fn is_none(&self) -> bool {
         self.0 == usize::MAX
+    }
+
+    pub fn as_ix(&self) -> Ix {
+        Ix(self.0 | 1 << (usize::BITS - 1))
     }
 }
 
@@ -362,10 +608,119 @@ impl Child {
     pub fn top_bits(&self) -> usize {
         self.0 >> (usize::BITS - 2)
     }
+
+    pub fn is_data(&self) -> bool {
+        self.top_bits() != 0b00 && self.top_bits() != 0b01
+    }
+
+    pub fn is_hashed(&self) -> bool {
+        self.top_bits() == 0b00
+    }
+
+    pub fn as_ix(&self) -> Option<Ix> {
+        if self.is_none() {
+            Some(Ix::none())
+        } else if self.is_data() {
+            None
+        } else if self.is_hashed() {
+            Some(Ix(self.0))
+        } else {
+            let mut val = self.0;
+            val = val ^ (1 << (usize::BITS - 2));
+            val = val ^ (1 << (usize::BITS - 1));
+            Some(Ix(val))
+        }
+    }
 }
 
 impl Default for Child {
     fn default() -> Self {
         Self::none()
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ix(pub usize);
+
+impl Ix {
+    pub fn hashed(ix: usize) -> Self {
+        let bits = usize::BITS;
+        Self(ix % (1 << (bits - 1)))
+    }
+
+    pub fn sibbed(ix: usize) -> Self {
+        let bits = usize::BITS;
+        Self((ix % (1 << (bits - 1))) | (0b1 << (bits - 1)))
+    }
+
+    pub fn none() -> Self {
+        Self(usize::MAX)
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.0 == usize::MAX
+    }
+
+    pub fn is_hashed(&self) -> bool {
+        self.top_bit() == 0
+    }
+
+    pub fn top_bit(&self) -> usize {
+        self.0 >> (usize::BITS - 1)
+    }
+
+    pub fn as_enum(&self) -> Option<Result<usize, usize>> {
+        if self.is_none() {
+            None
+        } else {
+            if self.is_hashed() {
+                Some(Ok(self.0))
+            } else {
+                Some(Err(self.0 % (1 << (usize::BITS - 1))))
+            }
+        }
+    }
+}
+
+impl Default for Ix {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use bumpalo::Bump;
+    use itertools::iproduct;
+
+    use super::{Ix, Trie};
+
+    #[test]
+    fn iter_keys() {
+        let a = Bump::new();
+        let t = Trie::from_sorted::<ahash::AHasher, _>((0..10).map(|x| [x]), &a).unwrap();
+
+        let v: Vec<_> = t
+            .intersect_unchecked::<ahash::AHasher, 0>(Ix::none(), [])
+            .map(|x| *x.0)
+            .collect();
+        assert_eq!(v, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn iter_nested() {
+        let sz = &10;
+        let iter = iproduct!(0..*sz, 0..*sz, 0..*sz, 0..*sz, 0..*sz)
+            .map(|(x, y, z, a, b)| [x, y, z, a, b]);
+        let a = Bump::new();
+        let t = Trie::from_sorted::<ahash::AHasher, _>(iter, &a).unwrap();
+
+        println!("{:?}", t.hash_keys[t.root.0]);
+
+        let v: Vec<_> = t
+            .intersect_unchecked::<ahash::AHasher, 0>(Ix::none(), [])
+            .map(|x| *x.0)
+            .collect();
+        assert_eq!(v, (0..10).collect::<Vec<_>>());
     }
 }
