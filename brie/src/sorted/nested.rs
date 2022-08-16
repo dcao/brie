@@ -3,7 +3,7 @@
 use bumpalo::Bump;
 
 use core::{fmt, ptr, slice};
-use std::{cmp::Ordering, ops};
+use std::{cmp::Ordering, mem::MaybeUninit, ops};
 
 use crate::Oneshot;
 
@@ -205,19 +205,56 @@ where
             }
         }
 
-
         res
     }
 
-    fn advance(self, v: &Self::Value) -> Option<Self> {
-        todo!()
+    fn advance(&'bump self, v: &Self::Value) -> Option<&'bump Self> {
+        self.0.get(v)
     }
 
     fn intersect<'a, 't: 'bump, const M: usize>(
         &'t self,
         others: [&'t Self; M],
     ) -> Self::KeyIter<M> {
-        std::iter::from_fn(|| todo!())
+        // To do intersection, we do a linear pass through all tries.
+        let mut this_iter = self.0.iter();
+
+        let mut others: [std::iter::Peekable<_>; M] = unsafe {
+            let mut arr: [_; M] = MaybeUninit::uninit().assume_init();
+            for (item, t) in (&mut arr[..]).into_iter().zip(others) {
+                std::ptr::write(item, t.0.iter().peekable());
+            }
+            arr
+        };
+
+        std::iter::from_fn(move || {
+            'outer: loop {
+                // If we still have a value here
+                if let Some((this_val, _)) = this_iter.next() {
+                    // For each of our other values
+                    for it in others.iter_mut() {
+                        'inner: loop {
+                            if let Some((k, _)) = it.peek() {
+                                if k > this_val {
+                                    continue 'outer;
+                                } else if k == this_val {
+                                    it.next();
+                                    return Some(k);
+                                } else {
+                                    it.next();
+                                    continue 'inner;
+                                }
+                            } else {
+                                return None;
+                            }
+                        }
+                    }
+                } else {
+                    return None;
+                }
+            }
+        })
+        .fuse()
     }
 }
 

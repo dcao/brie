@@ -53,9 +53,8 @@ where
             .filter(move |k| others.iter().all(|idx| idx.0.contains_key(k)))
     }
 
-    fn advance(mut self, v: &Self::Value) -> Option<Self> {
-        // TODO: technically not optimal but...
-        self.0.remove(v)
+    fn advance(&'bump self, v: &Self::Value) -> Option<&'bump Self> {
+        self.0.get(v)
     }
 }
 
@@ -102,8 +101,7 @@ where
             .filter(move |k| others.iter().all(|idx| idx.0.contains_key(k)))
     }
 
-    fn advance(mut self, v: &Self::Value) -> Option<Self> {
-        // TODO: technically not optimal but...
-        self.0.remove(v)
+    fn advance(&'bump self, v: &Self::Value) -> Option<&'bump Self> {
+        self.0.get(v)
     }
 }

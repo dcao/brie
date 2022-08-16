@@ -9,6 +9,7 @@
 use bumpalo::Bump;
 
 pub mod hash;
+pub mod simple_hash;
 pub mod skip_list;
 pub mod sorted;
 pub mod vanilla;
@@ -23,7 +24,7 @@ where
         Self: 'bump;
 
     fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'bump Bump) -> Self;
-    fn advance(self, v: &Self::Value) -> Option<Self>;
+    fn advance(&'bump self, v: &Self::Value) -> Option<&'bump Self>;
     fn intersect<'a, 't: 'bump, const M: usize>(
         &'t self,
         others: [&'t Self; M],

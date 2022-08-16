@@ -1,5 +1,4 @@
-//! Experimental flattened hash trie impl, influenced by
-//! the bytell hash map
+//! Experimental flattened hash trie impl
 
 use std::{
     hash::{Hash, Hasher},
@@ -53,10 +52,11 @@ impl<'b, T: Clone + Hash + Ord + Eq + Default + std::fmt::Debug, const N: usize>
         }
     }
 
-    fn advance(mut self, v: &Self::Value) -> Option<Self> {
-        self.query.push(v.clone());
+    fn advance(&'b self, v: &Self::Value) -> Option<&'b Self> {
+        todo!()
+        // self.query.push(v.clone());
 
-        Some(self)
+        // Some(self)
     }
 
     fn intersect<'a, 't: 'b, const M: usize>(&'t self, others: [&'t Self; M]) -> Self::KeyIter<M> {
