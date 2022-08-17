@@ -7,28 +7,9 @@ use crate::{sorted::vec::BumpVec, Oneshot};
 
 use std::{hash::{Hash, Hasher}, mem::MaybeUninit};
 
-// #[derive(Debug)]
-// pub enum Trie<'b, E, const N: usize> {
-//     Empty,
-//     Data(Box<'b, Data<'b, [E; N]>>),
-//     Map(BumpVec<'b, Entry<'b, E, N>>),
-// }
-
-// impl<'b, E, const N: usize> Default for Trie<'b, E, N> {
-//     fn default() -> Self {
-//         Trie::Empty
-//     }
-// }
-
-// #[derive(Debug, Default)]
-// pub struct Entry<'b, E, const N: usize> {
-//     hash: usize,
-//     ptr: Trie<'b, E, N>,
-// }
-
 pub enum Trie<'b, E, const N: usize> {
     Empty,
-    Data(Box<'b, Data<'b, [E; N]>>),
+    Data(Box<'b, Data<'b, [E; N]>>), // FIXME
     Map(BumpVec<'b, Self>),
 }
 
@@ -39,7 +20,8 @@ pub struct Data<'b, T> {
 
 impl<'b, E, const N: usize> Trie<'b, E, N>
 where
-    E: Hash,
+    E: Clone + Hash,
+    E: 'b,
 {
     fn get<H: Hasher + Default>(&mut self, key: &E) -> Option<&mut Self> {
         match self {
@@ -98,9 +80,11 @@ where
 impl<'b, E, const N: usize> Oneshot<'b, N> for Trie<'b, E, N>
 where
     E: Clone + Hash,
+    E: 'b,
 {
     type Value = E;
-    type KeyIter<const M: usize> = impl Iterator<Item = &'b E> where Self: 'b;
+    type IVal = usize;
+    type KeyIter<const M: usize> = impl Iterator<Item = usize>;
 
     fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'b Bump) -> Self {
         // Collect into a vec first (lmao)
@@ -180,7 +164,44 @@ where
         todo!()
     }
 
-    fn intersect<'a, 't: 'b, const M: usize>(&'t self, others: [&'t Self; M]) -> Self::KeyIter<M> {
-        std::iter::from_fn(|| todo!())
+    fn intersect<'a, const M: usize>(&'b self, others: [&'b Self; M]) -> Self::KeyIter<M> {
+        let mut vals = match self {
+            Trie::Empty => todo!(),
+            Trie::Data(_) => todo!(),
+            Trie::Map(vs) => vs.iter().enumerate(),
+        };
+        let this_bits = vals.len().log2();
+
+        std::iter::from_fn(move || {
+            'outer: loop {
+                if let Some((ix, v)) = vals.next() {
+                    if let Trie::Empty = v {
+                        continue 'outer;
+                    }
+
+                    for other in others.iter() {
+                        let other = match other {
+                            Trie::Empty => todo!(),
+                            Trie::Data(_) => todo!(),
+                            Trie::Map(os) => os,
+                        };
+                        let other_bits = other.len().log2();
+
+                        // what to do??
+                        todo!();
+
+                        if let Trie::Empty = other[ix] {
+                            continue 'outer;
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    return Some(ix)
+                } else {
+                    return None;
+                }
+            }
+        })
     }
 }

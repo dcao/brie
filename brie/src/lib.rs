@@ -20,15 +20,16 @@ where
     Self: Sized,
 {
     type Value;
-    type KeyIter<const M: usize>: Iterator<Item = &'bump Self::Value>
+    type IVal;
+    type KeyIter<const M: usize>: Iterator<Item = Self::IVal> + 'bump
     where
         Self: 'bump;
 
     fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'bump Bump) -> Self;
     fn advance(&'bump self, v: &Self::Value) -> Option<&'bump Self>;
-    fn intersect<'a, 't: 'bump, const M: usize>(
-        &'t self,
-        others: [&'t Self; M],
+    fn intersect<'a, const M: usize>(
+        &'bump self,
+        others: [&'bump Self; M],
     ) -> Self::KeyIter<M>;
     // fn materialize(&self, query: [T; M]) -> impl Iterator<Item = [T; M + 1]>;
 }

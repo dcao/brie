@@ -192,6 +192,7 @@ where
     V: Ord + Clone + 'bump,
 {
     type Value = V;
+    type IVal = &'bump V;
     type KeyIter<const M: usize> = impl Iterator<Item = &'bump Self::Value>
     where Self: 'bump;
 
@@ -212,9 +213,9 @@ where
         self.0.get(v)
     }
 
-    fn intersect<'a, 't: 'bump, const M: usize>(
-        &'t self,
-        others: [&'t Self; M],
+    fn intersect<'a, const M: usize>(
+        &'bump self,
+        others: [&'bump Self; M],
     ) -> Self::KeyIter<M> {
         // To do intersection, we do a linear pass through all tries.
         let mut this_iter = self.0.iter();

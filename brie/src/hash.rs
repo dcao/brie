@@ -41,6 +41,7 @@ impl<'b, T: Clone + Hash + Ord + Eq + Default + std::fmt::Debug, const N: usize>
     for ManagedTrie<'b, T, N>
 {
     type Value = T;
+    type IVal = &'b T;
     type KeyIter<const M: usize> = impl Iterator<Item = &'b T>;
 
     fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'b Bump) -> Self {
@@ -59,9 +60,9 @@ impl<'b, T: Clone + Hash + Ord + Eq + Default + std::fmt::Debug, const N: usize>
         // Some(self)
     }
 
-    fn intersect<'a, 't: 'b, const M: usize>(&'t self, others: [&'t Self; M]) -> Self::KeyIter<M> {
+    fn intersect<'a, const M: usize>(&'b self, others: [&'b Self; M]) -> Self::KeyIter<M> {
         let from = self.trie.query_to_ix::<ahash::AHasher>(self.query.as_ref());
-        let others: [(&'t Trie<_, N>, Ix); M] = unsafe {
+        let others: [(&'b Trie<_, N>, Ix); M] = unsafe {
             let mut arr: [_; M] = MaybeUninit::uninit().assume_init();
             for (item, mt) in (&mut arr[..]).into_iter().zip(others) {
                 std::ptr::write(

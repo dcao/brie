@@ -29,6 +29,7 @@ where
     T: 'bump,
 {
     type Value = T;
+    type IVal = &'bump T;
     type KeyIter<const M: usize> = impl Iterator<Item = &'bump T>;
 
     fn from_iter<I: IntoIterator<Item = [T; N]>>(iter: I, bump: &'bump Bump) -> Self {
@@ -44,9 +45,9 @@ where
         res
     }
 
-    fn intersect<'a, 't: 'bump, const M: usize>(
-        &'t self,
-        others: [&'t Self; M],
+    fn intersect<'a, const M: usize>(
+        &'bump self,
+        others: [&'bump Self; M],
     ) -> Self::KeyIter<M> {
         self.0
             .keys()
@@ -77,6 +78,7 @@ where
     T: 'bump,
 {
     type Value = T;
+    type IVal = &'bump T;
     type KeyIter<const M: usize> = impl Iterator<Item = &'bump T>;
 
     fn from_iter<I: IntoIterator<Item = [T; N]>>(iter: I, bump: &'bump Bump) -> Self {
@@ -92,9 +94,9 @@ where
         res
     }
 
-    fn intersect<'a, 't: 'bump, const M: usize>(
-        &'t self,
-        others: [&'t Self; M],
+    fn intersect<'a, const M: usize>(
+        &'bump self,
+        others: [&'bump Self; M],
     ) -> Self::KeyIter<M> {
         self.0
             .keys()

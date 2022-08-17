@@ -22,6 +22,7 @@ use std::{
 pub enum Trie<'b, E, const N: usize> {
     Empty,
     Data(Box<'b, Data<'b, [E; N]>>),
+    // Data(E),
     Map(BumpVec<'b, Entry<'b, E, N>>),
 }
 
@@ -164,13 +165,14 @@ where
     E: Clone + Hash,
 {
     type Value = E;
-    type KeyIter<const M: usize> = impl Iterator<Item = &'b E> where Self: 'b;
+    type IVal = usize;
+    type KeyIter<const M: usize> = impl Iterator<Item = usize> where Self: 'b;
 
     fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'b Bump) -> Self {
         // Collect into a vec first (lmao)
         let iter = iter.into_iter().collect::<Vec<_>>();
 
-        // HLL++ cardinality estimation
+        // HLL cardinality estimation
         let mut hlls: [HyperLogLogPF<E, ahash::RandomState>; N] = unsafe {
             let mut arr: [_; N] = MaybeUninit::uninit().assume_init();
             for item in &mut arr[..] {
@@ -242,7 +244,55 @@ where
         todo!()
     }
 
-    fn intersect<'a, 't: 'b, const M: usize>(&'t self, others: [&'t Self; M]) -> Self::KeyIter<M> {
-        std::iter::from_fn(|| todo!())
+    fn intersect<'a, const M: usize>(&'b self, others: [&'b Self; M]) -> Self::KeyIter<M> {
+        let mut vals = match self {
+            Trie::Empty => todo!(),
+            Trie::Data(_) => todo!(),
+            Trie::Map(vs) => vs.iter().enumerate(),
+        };
+
+        std::iter::from_fn(move || {
+            'outer: loop {
+                if let Some((ix, v)) = vals.next() {
+                    if let Trie::Empty = v.ptr {
+                        continue 'outer;
+                    }
+
+                    for other in others.iter() {
+                        let other = match other {
+                            Trie::Empty => todo!(),
+                            Trie::Data(_) => todo!(),
+                            Trie::Map(os) => os,
+                        };
+                        let other_bits = other.len().log2();
+                        let mut other_ix = (v.hash >> (usize::BITS - other_bits)) as usize;
+
+                        // Start linear probe search
+                        let max_ix = other.len() - 1;
+
+                        loop {
+                            let cur = &other[other_ix];
+
+                            if other_ix == max_ix {
+                                // Couldn't find before end
+                                continue 'outer;
+                            } else if let Trie::Empty = cur.ptr {
+                                // Couldn't find before empty
+                                continue 'outer;
+                            } else if cur.hash == v.hash {
+                                // This ix is ok if it's the same hash
+                                break;
+                            }
+
+                            other_ix += 1;
+                        }
+                    }
+
+                    return Some(ix)
+                } else {
+                    return None;
+                }
+            }
+        })
     }
 }
