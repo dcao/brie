@@ -1,10 +1,11 @@
 // TODO: data-oriented opts (later!)
 
 use bumpalo::{boxed::Box, Bump};
+use hyperloglogplus::{HyperLogLogPF, HyperLogLog};
 
 use crate::{sorted::vec::BumpVec, Oneshot};
 
-use std::hash::{Hash, Hasher};
+use std::{hash::{Hash, Hasher}, mem::MaybeUninit};
 
 pub enum Trie<'b, E, const N: usize> {
     Empty,
@@ -53,7 +54,7 @@ where
 
     fn calc_buckets(iter_len: usize) -> usize {
         let sz = iter_len as f64;
-        ((sz * 0.25) as usize).next_power_of_two()
+        ((sz * 1.25) as usize).next_power_of_two()
     }
 
     fn get_bucket<H: Hasher + Default>(elem: &E, buckets: usize) -> usize {
@@ -71,17 +72,46 @@ where
     type KeyIter<const M: usize> = impl Iterator<Item = &'b E> where Self: 'b;
 
     fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'b Bump) -> Self {
-        let iter = iter.into_iter();
-        let buckets = Self::calc_buckets(iter.size_hint().1.unwrap());
+        // Collect into a vec first (lmao)
+        let iter = iter.into_iter().collect::<Vec<_>>();
 
-        let mut res = Trie::map(buckets, bump);
+        // HLL++ cardinality estimation
+        let mut hlls: [HyperLogLogPF<E, ahash::RandomState>; N] = unsafe {
+            let mut arr: [_; N] = MaybeUninit::uninit().assume_init();
+            for item in &mut arr[..] {
+                std::ptr::write(
+                    item,
+                    HyperLogLogPF::new(4, ahash::RandomState::new()).unwrap(),
+                );
+            }
+            arr
+        };
+
+        for tup in iter.iter() {
+            for (v, c) in tup.iter().zip(hlls.iter_mut()) {
+                c.insert(v);
+            }
+        }
+
+        let cardinalities: [usize; N] = unsafe {
+            let mut arr: [_; N] = MaybeUninit::uninit().assume_init();
+            for (item, hll) in (&mut arr[..]).into_iter().zip(hlls.iter_mut()) {
+                std::ptr::write(
+                    item,
+                    hll.count().trunc() as usize,
+                );
+            }
+            arr
+        };
+
+        let mut res = Trie::Empty;
 
         for tup in iter {
             let mut cur = &mut res;
 
-            let mut it = tup.iter();
-            while let Some(v) = it.next() {
-                cur.init(buckets, bump);
+            let mut it = tup.iter().zip(cardinalities.iter());
+            while let Some((v, buckets)) = it.next() {
+                cur.init(Self::calc_buckets(*buckets), bump);
                 cur = cur.get::<ahash::AHasher>(v).unwrap();
             }
 
