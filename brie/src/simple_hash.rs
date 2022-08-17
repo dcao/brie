@@ -72,6 +72,17 @@ where
         Self::Map(bv)
     }
 
+    fn print_util(&self) {
+        match self {
+            Trie::Map(vs) => {
+                let occ = vs.iter().filter(|x| if let Trie::Empty = x { false } else { true }).count();
+                println!("{} / {}", occ, vs.len());
+            },
+            _ => {},
+            
+        }
+    }
+
     fn calc_bits(iter_len: usize) -> u32 {
         let sz = iter_len as f64;
         (sz * 1.25).log2().ceil() as u32
