@@ -10,7 +10,6 @@ use bumpalo::Bump;
 
 pub mod hash;
 pub mod simple_hash;
-pub mod simple_hash2;
 pub mod skip_list;
 pub mod sorted;
 pub mod vanilla;

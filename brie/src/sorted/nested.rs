@@ -1,6 +1,7 @@
 //! Sorted maps/tries, backed by a RawVec
 
 use bumpalo::Bump;
+use itertools::Itertools;
 
 use core::{fmt, ptr, slice};
 use std::{cmp::Ordering, mem::MaybeUninit, ops};
@@ -40,6 +41,20 @@ where
     #[inline]
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    #[inline]
+    pub fn push(&mut self, value: (K, V), bump: &'bump Bump) {
+        // This will panic or abort if we would allocate > isize::MAX bytes
+        // or if the length increment would overflow for zero-sized types.
+        if self.len == self.buf.cap() {
+            self.reserve(1, bump);
+        }
+        unsafe {
+            let end = self.buf.ptr().add(self.len);
+            ptr::write(end, value);
+            self.len += 1;
+        }
     }
 
     pub fn reserve(&mut self, additional: usize, bump: &'bump Bump) {
@@ -115,7 +130,7 @@ where
     where
         F: FnMut() -> V,
     {
-        match self.binary_search_by(|v| k.cmp(v)) {
+        match self.binary_search_by(|v| v.cmp(&k)) {
             // SAFETY: binary_search_by guarantees found < len
             Ok(found) => unsafe { &mut self.get_unchecked_mut(found).1 },
             Err(none) => &mut self.insert_at_ix(none, (k, vf()), bump).1,
@@ -189,7 +204,7 @@ pub struct Trie<'a, T>(Map<'a, T, Self>);
 
 impl<'bump, V, const N: usize> Oneshot<'bump, N> for Trie<'bump, V>
 where
-    V: Ord + Clone + 'bump,
+    V: Ord + Clone + std::fmt::Debug + 'bump,
 {
     type Value = V;
     type IVal = &'bump V;
@@ -199,7 +214,7 @@ where
     fn from_iter<I: IntoIterator<Item = [Self::Value; N]>>(iter: I, bump: &'bump Bump) -> Self {
         let mut res = Self(Map::new());
 
-        for tuple in iter.into_iter() {
+        for tuple in iter.into_iter().sorted() {
             let mut trie = &mut res;
             for v in tuple {
                 trie = trie.0.get_or_insert(v.clone(), || Self(Map::new()), bump);
@@ -213,10 +228,7 @@ where
         self.0.get(v)
     }
 
-    fn intersect<'a, const M: usize>(
-        &'bump self,
-        others: [&'bump Self; M],
-    ) -> Self::KeyIter<M> {
+    fn intersect<'a, const M: usize>(&'bump self, others: [&'bump Self; M]) -> Self::KeyIter<M> {
         // To do intersection, we do a linear pass through all tries.
         let mut this_iter = self.0.iter();
 
@@ -233,14 +245,14 @@ where
                 // If we still have a value here
                 if let Some((this_val, _)) = this_iter.next() {
                     // For each of our other values
-                    for it in others.iter_mut() {
+                    'next: for it in others.iter_mut() {
                         'inner: loop {
                             if let Some((k, _)) = it.peek() {
                                 if k > this_val {
                                     continue 'outer;
                                 } else if k == this_val {
                                     it.next();
-                                    return Some(k);
+                                    continue 'next;
                                 } else {
                                     it.next();
                                     continue 'inner;
@@ -250,6 +262,9 @@ where
                             }
                         }
                     }
+
+                    // Passed!
+                    return Some(this_val);
                 } else {
                     return None;
                 }
@@ -288,3 +303,22 @@ where
 //         todo!()
 //     }
 // }
+
+#[cfg(test)]
+mod test {
+    use bumpalo::Bump;
+
+    use crate::{sorted::nested, Oneshot};
+
+    use super::Trie;
+
+    #[test]
+    fn iter_keys() {
+        let a = Bump::new();
+        let t = Trie::from_iter((0..10).map(|x| [x]), &a);
+        let t2 = Trie::from_iter((0..10).step_by(2).map(|x| [x]), &a);
+
+        let v: usize = <nested::Trie<'_, i32> as Oneshot<1>>::intersect(&t, [&t2]).count();
+        assert_eq!(v, 5);
+    }
+}
